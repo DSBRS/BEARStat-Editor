@@ -283,6 +283,7 @@ function mprev(){const m=MOD(S.tab),v=mcollect();let er=mvalid(m,v),code='';
 
 /* ---------- BEARStat 데이터 관리 ---------- */
 const DATA_MODS=[
+ {id:'jsonbulk',label:'JSON 일괄 입력',help:'하루가 만든 시즌 스탯 JSON을 파일로 선택하거나 텍스트로 붙여넣어 한 번에 추가합니다. 현재 투수 구종 구사율·평균구속과 타자 구종별 대응을 지원합니다.',fields:[]},
  {id:'results',label:'경기 결과',help:'이미 등록된 경기를 찾아 최종 스코어와 투수 결과, 홈런, 선수별 기록을 업데이트합니다. 교육리그·이벤트 매치도 수정할 수 있습니다.',fields:[]},
  {id:'eduadd',label:'교육리그 일정·기록',help:'교육리그 경기 정보와 선수별 기록을 칸으로 입력합니다. 선수 추가 버튼으로 여러 명을 등록할 수 있습니다.',fields:[
   ['date','날짜','date'],['time','시간','time'],['title','제목','text'],['opp','상대팀','text'],['place','장소','text'],['score','스코어','text']]},
@@ -292,7 +293,7 @@ const DATA_MODS=[
  {id:'jerseydata',label:'등번호',help:'등번호 사용 이력(jersey_number_data)에 추가합니다.',fields:[['number','등번호','text'],['name','이름','text'],['role','역할(선수면 비워도 됨)','text'],['start','시작','text'],['end','종료(현재면 비움)','text'],['current','현재 사용','sel']]}
 ];
 const DM=id=>DATA_MODS.find(x=>x.id===id);
-function dataAvailable(id){if(!S.orig)return false;if(id==='results')return S.cands.length>0;if(id==='playermgr'||id==='playerdata')return /<template id="career_catalog_data">/.test(S.orig);if(id==='jerseydata')return /<template id="jersey_number_data">/.test(S.orig);if(id==='awarddata')return !!findT(S.orig,'BEAR_BUILTIN_AWARDS');if(id==='eduadd')return !!findT(S.orig,'DEMO');return false}
+function dataAvailable(id){if(!S.orig)return false;if(id==='jsonbulk')return true;if(id==='results')return S.cands.length>0;if(id==='playermgr'||id==='playerdata')return /<template id="career_catalog_data">/.test(S.orig);if(id==='jerseydata')return /<template id="jersey_number_data">/.test(S.orig);if(id==='awarddata')return !!findT(S.orig,'BEAR_BUILTIN_AWARDS');if(id==='eduadd')return !!findT(S.orig,'DEMO');return false}
 function dataFieldHTML(f){const [k,l,t,ph]=f;if(t==='area')return `<label>${l}<textarea rows="5" data-dk="${k}" placeholder="${esc(ph||'')}"></textarea></label>`;if(t==='sel'){let opts=k==='role'?[['hitter','타자'],['pitcher','투수']]:k==='category'?[['monthly-mvp','월간 MVP'],['mvp','포스트시즌 MVP'],['title-holder','타이틀 홀더'],['choi-dongwon','최동원상'],['etc','기타']]:[['false','아니오'],['true','예']];return `<label>${l}<select data-dk="${k}">${opts.map(x=>`<option value="${x[0]}">${x[1]}</option>`).join('')}</select></label>`}return `<label>${l}<input type="${t}" data-dk="${k}"></label>`}
 const EDU_BF=[['atBats','타수'],['hits','안타'],['doubles','2루타'],['triples','3루타'],['homeRuns','홈런'],['stolenBases','도루'],['walks','볼넷'],['hitByPitch','사구'],['intentionalWalks','고의4구'],['groundedIntoDoublePlay','병살타'],['order','타순']];
 const EDU_PF=[['innings','이닝'],['hits','피안타'],['homeRuns','피홈런'],['strikeouts','탈삼진'],['walks','볼넷'],['hitByPitch','사구'],['runs','실점'],['earnedRuns','자책점']];
@@ -317,8 +318,45 @@ function resultEditor(g){const {c,e,ci,ei}=g,score=rawField(e,'score'),status=ra
 function renderResults(){const rows=resultGameRows();let selected='';if(RM.ei!=null){const c=S.cands[RM.ci],e=c&&c.els[RM.ei];if(c&&e)selected=resultEditor({c,e,ci:RM.ci,ei:RM.ei,d:F(e,c.dk)?.v||'',title:c.ttl?F(e,c.ttl)?.v||'':'',ty:c.tk?F(e,c.tk)?.v||'':'',more:''})}$('#dataFields').innerHTML=`<div style="grid-column:1/-1"><div class="row"><input id="rmSearch" placeholder="날짜·경기명·상대팀 검색" value="${esc(RM.q)}" style="flex:1"></div><div id="rmEdit">${selected}</div><div style="margin-top:12px">${rows.map(g=>`<button type="button" class="s" data-rm-game="${g.ci}:${g.ei}" style="margin:3px">${esc(g.d)} · ${esc(g.title||g.more.slice(0,35)||g.c.name)}</button>`).join('')||'<div class="meta">검색 결과가 없습니다.</div>'}</div><div class="meta" style="margin-top:8px">최근 검색 결과 ${rows.length}개 표시 · 기존 경기를 선택해서 결과를 업데이트합니다.</div></div>`}
 function setObjectProps(c,e,vals){let t=S.orig.slice(e.s,e.e),fs=e.f||[];const reps=[];for(const [k,val] of Object.entries(vals)){if(val===undefined)continue;const f=fs.find(x=>x.k===k);let x;if(Array.isArray(val)||val&&typeof val==='object')x=JSON.stringify(val);else if(typeof val==='boolean')x=String(val);else x=JSON.stringify(String(val));if(f)reps.push({a:f.vs-e.s,b:f.ve-e.s,x});else{const pos=t.lastIndexOf('}');if(pos>=0)reps.push({a:pos,b:pos,x:(fs.length?',':'')+JSON.stringify(k)+':'+x})}}reps.sort((a,b)=>b.a-a.a).forEach(r=>t=t.slice(0,r.a)+r.x+t.slice(r.b));return t}
 function rmRows(role){const box=document.querySelector(`[data-rm-list="${role}"]`);if(!box)return[];return [...box.querySelectorAll(`[data-edu-row="${role}"]`)].map(row=>{const o={name:row.querySelector('[data-edu-name]').value.trim()};row.querySelectorAll('[data-edu-stat]').forEach(el=>{const k=el.dataset.eduStat,v=el.value.trim();if(k==='innings'){o[k]=v||'0';const m=v.match(/^(\d+)(?:\.([012]))?$/);if(!m)throw Error((o.name||'투수')+': 이닝은 3, 3.1, 3.2처럼 입력해 주세요');o.outs=+m[1]*3+(+m[2]||0)}else o[k]=Number(v||0)});return o}).filter(x=>x.name)}
+let JB={obj:null,text:'',name:''};
+function pctNum(v){if(v==null||v==='')return null;if(typeof v==='number')return v;const n=Number(String(v).replace('%','').trim());return Number.isFinite(n)?n:null}
+function normalizeBearstatJSON(o){
+ if(!o||typeof o!=='object'||Array.isArray(o))throw Error('JSON 최상위 형식이 올바르지 않습니다.');
+ const season=Number(o['시즌']),team=String(o['팀']||'').trim(),ps=o['투수_구종_구사율'],bs=o['타자_구종별_대응'];
+ if(!Number.isInteger(season)||season<1982||season>2100)throw Error('시즌 값을 확인해 주세요.');
+ if(!team)throw Error('팀 값이 없습니다.');
+ if(!Array.isArray(ps)&&!Array.isArray(bs))throw Error('지원하는 스탯(투수_구종_구사율 / 타자_구종별_대응)을 찾지 못했습니다.');
+ const pitchers=(Array.isArray(ps)?ps:[]).map(p=>({name:String(p['투수명']||'').trim(),totalPitches:Number(p['총투구수']||0),pitches:Object.entries(p['구종_상세']||{}).map(([pitch,x])=>({pitch,usage:pctNum(x ? (x['구사율_pct'] ?? x['구사율_str']) : null),avgVelocity:Number(x ? (x['평균구속_kmh'] ?? 0) : 0)||null})).filter(x=>x.pitch)})).filter(x=>x.name);
+ const batters=(Array.isArray(bs)?bs:[]).map(b=>({name:String(b['타자명']||'').trim(),playerId:b['선수ID']??null,pitches:(Array.isArray(b['구종별_대응'])?b['구종별_대응']:[]).map(x=>({pitch:String(x['구종']||'').trim(),pitchesSeen:Number(x['상대투구수']||0),swingRate:pctNum(x['스윙율']),whiffRate:pctNum(x['헛스윙율']),ballsInPlay:Number(x['인플레이타구수']||0)})).filter(x=>x.pitch)})).filter(x=>x.name);
+ if(!pitchers.length&&!batters.length)throw Error('선수 스탯을 한 건도 읽지 못했습니다. JSON 구조를 확인해 주세요.');
+ return{season,team,source:o['데이터_출처']||'',collectedAt:o['수집_일시']||'',pitchers,batters};
+}
+function pitchTemplate(){const re=/<template\s+id=["']pitch_arsenal_data["']\s*>([\s\S]*?)<\/template>/i,m=re.exec(S.orig);if(!m)return null;let obj;try{obj=JSON.parse(m[1])}catch(e){throw Error('기존 pitch_arsenal_data JSON이 손상되어 있습니다.')}return{m,obj}}
+function queueBearstatJSON(){
+ if(!JB.obj)throw Error('먼저 JSON을 분석해 주세요.');
+ const data=normalizeBearstatJSON(JB.obj),q=pitchTemplate();let root=q?q.obj:{version:1,seasons:{}};
+ if(!root||typeof root!=='object'||Array.isArray(root))root={version:1,seasons:{}};
+ if(!root.seasons||typeof root.seasons!=='object'||Array.isArray(root.seasons))root.seasons={};
+ root.seasons[String(data.season)]=data;root.updatedAt=new Date().toISOString().slice(0,10);
+ const html='<template id="pitch_arsenal_data">'+JSON.stringify(root)+'</template>';
+ S.repl=S.repl.filter(x=>x.label!=='JSON 스탯 '+data.season);
+ if(q)S.repl.push({s:q.m.index,e:q.m.index+q.m[0].length,text:html,label:'JSON 스탯 '+data.season});
+ else{const pos=S.orig.toLowerCase().lastIndexOf('</body>');if(pos<0)throw Error('</body> 위치를 찾지 못해 데이터를 안전하게 넣을 수 없습니다.');S.repl.push({s:pos,e:pos,text:'\n'+html+'\n',label:'JSON 스탯 '+data.season})}
+ touch();renderPend();$('#dataStatus').innerHTML='<span class="ok">'+data.season+' 시즌 · 투수 '+data.pitchers.length+'명 · 타자 '+data.batters.length+'명을 추가 예정 항목에 담았습니다 ✓</span>';
+}
+function analyzeJSONText(text,name='붙여넣기'){
+ const t=String(text||'').trim();if(!t)throw Error('JSON 내용이 비어 있습니다.');let o;try{o=JSON.parse(t)}catch(e){throw Error('JSON 문법 오류: '+e.message)}const d=normalizeBearstatJSON(o);JB={obj:o,text:t,name};$('#jbPreview').innerHTML='<span class="ok">JSON 분석 성공 ✓</span><br><b>'+esc(String(d.season))+' · '+esc(d.team)+'</b><br>투수 '+d.pitchers.length+'명 · 타자 '+d.batters.length+'명'+(d.collectedAt?' · 수집 '+esc(d.collectedAt):'');$('#jbQueue').disabled=false;
+}
+function renderJSONBulk(){
+ $('#dataAdd').hidden=true;$('#dataFields').innerHTML=`<div id="jsonBulkPanel" style="grid-column:1/-1;position:relative;z-index:2;pointer-events:auto"><div class="row"><label style="flex:1">JSON 파일 선택<input id="jbFile" type="file" accept=".json,application/json"></label></div><div class="meta" style="margin:10px 0">또는 아래 칸에 하루 JSON 전체를 그대로 붙여넣어도 됩니다.</div><label>JSON 텍스트<textarea id="jbText" rows="14" placeholder="{ &quot;시즌&quot;: 2026, ... }" style="position:relative;z-index:3;pointer-events:auto"></textarea></label><div class="row" style="margin-top:10px"><button type="button" class="p" id="jbAnalyze">JSON 분석</button><button type="button" class="n" id="jbQueue" disabled>분석한 JSON 적용하기</button><button type="button" id="jbClear">비우기</button></div><div id="jbPreview" class="pv"><span class="meta">JSON 파일을 선택하거나 텍스트를 붙여넣은 뒤 ‘JSON 분석’을 눌러 주세요.</span></div></div>`;
+ const file=$('#jbFile'),txt=$('#jbText');
+ file.onchange=e=>{const f=e.target.files&&e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{txt.value=String(r.result||'');try{analyzeJSONText(txt.value,f.name)}catch(err){$('#jbPreview').innerHTML='<span class="bad">'+esc(err.message)+'</span>';$('#jbQueue').disabled=true}};r.onerror=()=>{$('#jbPreview').innerHTML='<span class="bad">JSON 파일을 읽지 못했습니다.</span>'};r.readAsText(f,'utf-8')};
+ $('#jbAnalyze').onclick=()=>{try{analyzeJSONText(txt.value,file.files&&file.files[0]?file.files[0].name:'붙여넣기')}catch(err){$('#jbPreview').innerHTML='<span class="bad">'+esc(err.message)+'</span>';$('#jbQueue').disabled=true}};
+ $('#jbQueue').onclick=()=>{try{queueBearstatJSON()}catch(err){$('#dataStatus').innerHTML='<span class="bad">'+esc(err.message)+'</span>'}};
+ $('#jbClear').onclick=()=>{JB={obj:null,text:'',name:''};txt.value='';file.value='';$('#jbQueue').disabled=true;$('#jbPreview').innerHTML='<span class="meta">비웠습니다.</span>';$('#dataStatus').textContent=''};
+}
 let SM={year:String(new Date().getFullYear()),q:''};
-function renderData(){const m=DM(S.tab);if(!m)return;$('#dataTitle').textContent=m.label;$('#dataHelp').textContent=m.help;if(m.id==='playermgr'){renderPlayerManager();$('#dataAdd').hidden=true}else if(m.id==='results'){renderResults();$('#dataAdd').hidden=true}else{$('#dataAdd').hidden=false;$('#dataFields').innerHTML=m.fields.map(dataFieldHTML).join('')+(m.id==='eduadd'?eduBlock('bat','타자 기록')+eduBlock('pit','투수 기록'):'')}$('#dataStatus').textContent=''}
+function renderData(){const m=DM(S.tab);if(!m)return;$('#dataTitle').textContent=m.label;$('#dataHelp').textContent=m.help;if(m.id==='jsonbulk'){renderJSONBulk()}else if(m.id==='playermgr'){renderPlayerManager();$('#dataAdd').hidden=true}else if(m.id==='results'){renderResults();$('#dataAdd').hidden=true}else{$('#dataAdd').hidden=false;$('#dataFields').innerHTML=m.fields.map(dataFieldHTML).join('')+(m.id==='eduadd'?eduBlock('bat','타자 기록')+eduBlock('pit','투수 기록'):'')}$('#dataStatus').textContent=''}
 function dvals(){const v={};document.querySelectorAll('#dataFields [data-dk]').forEach(e=>v[e.dataset.dk]=e.value.trim());return v}
 function eduRows(role){return [...document.querySelectorAll(`[data-edu-row="${role}"]`)].map(row=>{const o={name:row.querySelector('[data-edu-name]').value.trim()};row.querySelectorAll('[data-edu-stat]').forEach(el=>{const k=el.dataset.eduStat,v=el.value.trim();if(k==='innings'){o[k]=v||'0';const m=v.match(/^(\d+)(?:\.([012]))?$/);if(!m)throw Error((o.name||'투수')+': 이닝은 3, 3.1, 3.2처럼 입력해 주세요');o.outs=+m[1]*3+(+m[2]||0)}else o[k]=Number(v||0)});return o}).filter(x=>x.name)}
 function templateJSON(id){const re=new RegExp('<template id="'+id+'">([\\s\\S]*?)<\\/template>'),m=re.exec(S.orig);if(!m)throw Error(id+' 데이터를 찾지 못했습니다');return{m,re,obj:JSON.parse(m[1])}}

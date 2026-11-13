@@ -226,13 +226,13 @@ function hid(pre,o,x){let h=0;for(const ch of JSON.stringify(o)+x)h=(h*31+ch.cha
 function evItem(type,v,title,desc){const o={id:hid(type,v,title),type,date:v.date,time:v.time||'',title,place:v.place||'',desc};return o}
 function parseYears(t){const out=[];for(const x of t.split(/\s*,\s*/).filter(Boolean)){const m=/^(\d{4})(?:\s*[-~]\s*(\d{4}))?$/.exec(x);if(!m)return null;const a=+m[1],b=+(m[2]||m[1]);if(b<a||b-a>60)return null;for(let y=a;y<=b;y++)if(!out.includes(y))out.push(y)}return out.length?out:null}
 const fd=(k,l,t='text',o={})=>({k,l,t,...o});
-const ETYPES=[['etc','기타'],['club','구단 행사'],['fan','팬 행사'],['broadcast','방송'],['radio','라디오/유튜브'],['ticket','티켓 예매']];
+const ETYPES=[['etc','기타'],['eventmatch','이벤트 매치'],['club','구단 행사'],['fan','팬 행사'],['broadcast','방송'],['radio','라디오/유튜브'],['ticket','티켓 예매']];
 const TEAMS2=[['두산 베어스','두산 베어스'],['OB 베어스','OB 베어스']];
 const MODS=[
  {id:'etc',label:'기타 일정',tgs:['DEMO'],help:'자선야구, 팬 행사, 방송, 티켓 예매처럼 KBO·퓨처스가 아닌 일정을 추가합니다.',
-  f:[fd('type','일정 종류','sel',{o:ETYPES}),fd('date','날짜','date',{req:1}),fd('time','시간','time'),fd('title','제목','text',{req:1,ph:'예: 자선야구'}),fd('place','장소'),fd('program','프로그램','text',{on:['broadcast','radio']}),fd('channel','채널','text',{on:['broadcast','radio']}),fd('ticketSite','티켓 예매 링크','text',{on:['ticket']}),fd('desc','설명','area')],
+  f:[fd('type','일정 종류','sel',{o:ETYPES}),fd('date','날짜','date',{req:1}),fd('time','시간','time'),fd('title','제목','text',{req:1,ph:'예: 곰모 이벤트 매치'}),fd('place','장소'),fd('homeTeam','홈 / 팀 A','text',{on:['eventmatch'],ph:'예: 두산 베어스'}),fd('awayTeam','원정 / 팀 B','text',{on:['eventmatch'],ph:'예: 상대팀'}),fd('opp','상대팀','text',{on:['eventmatch']}),fd('starter','선발','text',{on:['eventmatch']}),fd('oppStarter','상대 선발','text',{on:['eventmatch']}),fd('score','스코어','text',{on:['eventmatch'],ph:'예: 5-3'}),fd('status','경기 상태','sel',{on:['eventmatch'],o:[['예정','예정'],['진행중','진행중'],['종료','종료'],['취소','취소']]}),fd('program','프로그램','text',{on:['broadcast','radio']}),fd('channel','채널','text',{on:['broadcast','radio']}),fd('ticketSite','티켓 예매 링크','text',{on:['ticket']}),fd('desc','설명','area')],
   sum:v=>`${v.date} ${v.title}`,
-  make(v){const o=evItem(v.type,v,v.title,v.desc||'');[['program',['broadcast','radio']],['channel',['broadcast','radio']],['ticketSite',['ticket']]].forEach(([k,t])=>{if(v[k]&&t.includes(v.type))o[k]=v[k]});return[{tg:'DEMO',t:evText(o),k:evKey(o)}]}},
+  make(v){const o=evItem(v.type,v,v.title,v.desc||'');[['program',['broadcast','radio']],['channel',['broadcast','radio']],['ticketSite',['ticket']],['homeTeam',['eventmatch']],['awayTeam',['eventmatch']],['opp',['eventmatch']],['starter',['eventmatch']],['oppStarter',['eventmatch']],['score',['eventmatch']],['status',['eventmatch']]].forEach(([k,t])=>{if(v[k]&&t.includes(v.type))o[k]=v[k]});if(v.type==='eventmatch'){o.official=false;o.excludeFromStats=true;o.notificationCategory='eventmatch'}return[{tg:'DEMO',t:evText(o),k:evKey(o)}]}},
  {id:'bday',label:'선수 생일',tgs:['BEARS_HARU_BIRTHDAYS'],help:'달력에 생일이 뜨려면 “활동 연도”에 그 해가 들어 있어야 합니다. 예: 2024-2027 또는 2024, 2026',
   f:[fd('name','선수 이름','text',{req:1}),fd('b','생일','date',{req:1}),fd('ys','활동 연도','text',{req:1,ph:'2024-2027',d:String(YR)}),fd('pid','선수 ID (선택)')],
   sum:v=>`${v.name} · ${v.b} · ${v.ys}`,chk:v=>parseYears(v.ys)?'':'활동 연도를 “2024-2027” 또는 “2024, 2026” 형식으로 입력해 주세요.',

@@ -70,7 +70,7 @@ td{padding:6px 8px;border-top:1px solid var(--line);vertical-align:top}
 
   <div id="work" hidden>
     <div class="card" id="c2">
-      <h2>STEP 2. 국가대표·핸드볼 일정 편집</h2>
+      <h2>STEP 2. 일정 편집</h2>
       <label>일정 데이터 위치<select id="csel"></select></label>
       <div class="row" style="margin-top:12px">
         <button class="p" id="addBtn">+ 일정 추가</button>
@@ -305,27 +305,26 @@ function steps(){const n=!S.orig||$('#work').hidden?0:!S.res?1:!S.dl?2:3;
   $('#steps').innerHTML=['1 HTML 불러오기','2 일정 편집','3 확인','4 다운로드'].map((t,i)=>`<span class="${i===n?'on':i<n?'done':''}">${t}</span>`).join('→')}
 function touch(){S.res=null;S.dl=false;$('#resCard').hidden=true;$('#gerr').textContent='';renderPend();steps()}
 function renderPend(){const c=cur(),nS=S.pend.length,nM=S.mp.length,nR=S.repl.length;$('#pcount').textContent=`(${nS+nM+nR})`;$('#genBtn').disabled=!(nS+nM+nR);
-  const a=S.pend.map((p,i)=>`<div class="item"><div><span class="meta">국가대표·핸드볼</span> <b>${esc(dfmt(p.vals,c))}</b> ${esc(brief(p.vals,c))}</div><div class="row"><button class="s" data-ed="${i}">수정</button><button class="s" data-del="${i}">삭제</button></div></div>`).join('');
+  const a=S.pend.map((p,i)=>`<div class="item"><div><span class="meta">${esc(cur().name)}</span> <b>${esc(dfmt(p.vals,c))}</b> ${esc(brief(p.vals,c))}</div><div class="row"><button class="s" data-ed="${i}">수정</button><button class="s" data-del="${i}">삭제</button></div></div>`).join('');
   const b=S.mp.map((p,i)=>{const m=MOD(p.m);return`<div class="item"><div><span class="meta">${m.label}</span> ${esc(m.sum(p.v))}</div><div class="row"><button class="s" data-med="${i}">수정</button><button class="s" data-mdel="${i}">삭제</button></div></div>`}).join('');
   const r=S.repl.map((x,i)=>`<div class="item"><div><span class="meta">기존 일정 수정</span> ${esc(x.label)}</div><div class="row"><button class="s" data-rdel="${i}">취소</button></div></div>`).join('');
   $('#plist').innerHTML=a+b+r||'<div class="meta">아직 담은 항목이 없습니다. 위에서 항목을 입력하고 “추가 목록에 담기”를 눌러 주세요.</div>'}
-function schedCands(){return S.cands.filter(c=>c.tk&&c.types.some(t=>/national|국가|대표|handball|핸드볼/i.test(t.label+' '+t.raw)))}
 function valsOf(c,e){const v={};e.f.forEach(f=>{if(f.t==='s'||f.t==='n'||f.t==='b')v[f.k]=f.v});const d=F(e,c.dk);if(d&&d.t==='s'){const m=DR.exec(d.v);if(m){v[c.dk]=`${m[1]}-${p2(m[3])}-${p2(m[4])}`;if(m[6])v.__time=m[6]}}if(c.yk&&F(e,c.yk))v[c.yk]=F(e,c.yk).v;return v}
 function rewrite(c,e,p){let t=S.orig.slice(e.s,e.e),v=p.vals;const reps=e.f.map(f=>{let x=f.raw;if(f.k===c.dk)x=lit(fmtDate(v[c.dk],f.v,v.__time||v[c.yk]),f.q);else if(f.k===c.yk)x=lit(v[f.k]||'',f.q);else if(f.k===c.tk)x=p.type;else if(/^id$/i.test(f.k))x=f.raw;else if(f.t==='s')x=lit(v[f.k]??f.v,f.q);else if(f.t==='n'){const a=String(v[f.k]??f.v).trim();x=a&&isFinite(+a)?String(+a):f.raw}else if(f.t==='b')x=String(v[f.k]??f.v)==='true'?'true':'false';return{a:f.vs-e.s,b:f.ve-e.s,x}}).sort((a,b)=>b.a-a.a);reps.forEach(r=>t=t.slice(0,r.a)+r.x+t.slice(r.b));return t}
-function drawEx(){const q=$('#xq').value.trim().toLowerCase(),t=$('#xtype').value;let h='',n=0;
-  for(const c of schedCands())for(const e of c.els){if(!e.f)continue;const ty=c.tk?F(e,c.tk):null,label=ty?(c.types.find(x=>x.raw===ty.raw)?.label||ty.v):'';
-    if(!/national|국가|대표|handball|핸드볼/i.test(label+' '+(ty?.raw||'')))continue;
+function drawEx(){const c=cur(),q=$('#xq').value.trim().toLowerCase(),t=$('#xtype').value;let h='',n=0;
+  if(!c){$('#xt').innerHTML='';return}
+  for(let ei=0;ei<c.els.length;ei++){const e=c.els[ei];if(!e.f)continue;const ty=c.tk?F(e,c.tk):null,label=ty?(c.types.find(x=>x.raw===ty.raw)?.label||ty.v):'';
     if(t!==''&&(!ty||ty.raw!==t))continue;
     const txt=e.f.filter(f=>f.t==='s'&&![c.dk,c.yk,c.tk].includes(f.k)).sort(a=>a.k===c.ttl?-1:0).map(f=>f.v).filter(Boolean).join(' · ');
     const d=(F(e,c.dk)?.v||''),tm=c.yk?F(e,c.yk)?.v||'':'';
     if(q&&!(d+' '+tm+' '+label+' '+txt).toLowerCase().includes(q))continue;
-    if(++n<=300){const ci=S.cands.indexOf(c),ei=c.els.indexOf(e);h+=`<tr><td>${esc(d)}</td><td>${esc(tm)}</td><td>${esc(label)}</td><td>${esc(txt.slice(0,90))}</td><td><button class="s" data-xedit="${ci}:${ei}">수정</button></td></tr>`}}
-  $('#xt').innerHTML=h+`<tr><td colspan="5" class="meta">${n}개 일정${n>300?' (300개까지 표시)':''}</td></tr>`}
+    if(++n<=300)h+=`<tr><td>${esc(d)}</td><td>${esc(tm)}</td><td>${esc(label)}</td><td>${esc(txt.slice(0,90))}</td><td><button class="s" data-xedit="${S.ci}:${ei}">수정</button></td></tr>`}
+  $('#xt').innerHTML=h+`<tr><td colspan="5" class="meta">${esc(c.name)} · ${n}개 항목${n>300?' (300개까지 표시)':''}</td></tr>`}
 function setCand(i){S.ci=i;const c=cur();S.type=c.types[0]?.raw??null;S.pend=[];S.edit=null;$('#form').hidden=true;
-  $('#xq').value='';const ts=new Map();schedCands().forEach(x=>x.types.forEach(t=>{/national|국가|대표|handball|핸드볼/i.test(t.label+' '+t.raw)&&ts.set(t.raw,t.label)}));$('#xtype').innerHTML='<option value="">전체 종류</option>'+[...ts].map(([v,l])=>`<option value="${esc(v)}">${esc(l)}</option>`).join('');
+  $('#xq').value='';$('#xtype').innerHTML='<option value="">전체 종류</option>'+c.types.map(t=>`<option value="${esc(t.raw)}">${esc(t.label)}</option>`).join('');
   touch();drawEx()}
 function avail(id){if(!S.orig)return false;return id==='sched'?S.cands.length>0:MOD(id).tgs.every(t=>findT(S.orig,t))}
-function renderTabs(){$('#tabs').innerHTML=[{id:'sched',label:'국가대표·핸드볼'},...MODS].map(m=>`<button data-tab="${m.id}" class="${S.tab===m.id?'on':''}"${avail(m.id)?'':' disabled'}>${m.label}</button>`).join('')}
+function renderTabs(){$('#tabs').innerHTML=[{id:'sched',label:'일정 편집'},...MODS].map(m=>`<button data-tab="${m.id}" class="${S.tab===m.id?'on':''}"${avail(m.id)?'':' disabled'}>${m.label}</button>`).join('')}
 function go(id){S.tab=id;const sc=id==='sched';$('#c2').hidden=!sc;$('#xcard').hidden=!sc;$('#mcard').hidden=sc;if(!sc)renderM({});renderTabs()}
 function show(){S.cands=analyze(S.orig);S.res=null;S.dl=false;S.mp=[];S.pend=[];S.repl=[];S.medit=null;const c=S.cands[0],first=['sched',...MODS.map(m=>m.id)].find(avail);$('#work').hidden=!first;
   $('#info').innerHTML=`<b>${esc(S.name)}</b> · ${(S.size/1024).toFixed(1)}KB · `+(first?'<span class="ok">HTML 분석 성공 ✓</span>':'<span class="bad">일정 데이터 위치를 찾지 못했습니다.</span><br>BEARStat 일정 데이터 구조를 정확하게 확인하지 못했습니다. 원본 파일은 변경되지 않았습니다.');

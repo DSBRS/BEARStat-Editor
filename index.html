@@ -467,6 +467,1337 @@ $('#dl').onclick=()=>{const b=new Blob([S.res.text],{type:'text/html;charset=utf
 $('#resetBtn').onclick=()=>{if(!confirm('모든 편집 내용을 취소하고 처음 불러온 상태로 되돌립니다.'))return;S.pend=[];S.mp=[];S.repl=[];S.edit=null;S.medit=null;show()};
 $('#xq').oninput=drawEx;$('#xtype').onchange=drawEx;
 renderTabs();steps();renderPend();
+<script>
+/* =========================================================
+   BEARStat Editor - JSON 일괄 입력 확장
+   지원:
+   - JSON 파일 불러오기
+   - JSON 직접 붙여넣기
+   - 시즌/팀 자동 인식
+   - 투수 구종 구사율
+   - 타자 구종별 대응
+   - 동일 구조의 다른 시즌 JSON 지원
+   - 기존 수정 예정 목록 / HTML 생성 기능 연동
+   ========================================================= */
+
+(function () {
+  'use strict';
+
+  const JSON_TEMPLATE_ID = 'pitch_arsenal_data';
+
+  /* ---------- 유틸 ---------- */
+
+  function jEsc(v) {
+    return String(v ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function jsonPretty(obj) {
+    return JSON.stringify(obj, null, 2);
+  }
+
+  function normalizeNumber(v) {
+    if (v === null || v === undefined || v === '') return null;
+
+    if (typeof v === 'number') {
+      return Number.isFinite(v) ? v : null;
+    }
+
+    const n = Number(
+      String(v)
+        .replace(/,/g, '')
+        .replace(/%/g, '')
+        .trim()
+    );
+
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function firstValue(obj, keys) {
+    if (!obj || typeof obj !== 'object') return undefined;
+
+    for (const key of keys) {
+      if (obj[key] !== undefined && obj[key] !== null) {
+        return obj[key];
+      }
+    }
+
+    return undefined;
+  }
+
+  function arrayFrom(value) {
+    if (Array.isArray(value)) return value;
+
+    if (value && typeof value === 'object') {
+      return Object.entries(value).map(([name, item]) => {
+        if (item && typeof item === 'object' && !Array.isArray(item)) {
+          return {
+            name,
+            ...item
+          };
+        }
+
+        return {
+          name,
+          value: item
+        };
+      });
+    }
+
+    return [];
+  }
+
+  /* ---------- JSON 구조 인식 ---------- */
+
+  function getPitcherSection(obj) {
+    return firstValue(obj, [
+      '투수_구종_구사율',
+      '투수구종구사율',
+      'pitcherArsenal',
+      'pitcher_arsenal',
+      'pitchers'
+    ]);
+  }
+
+  function getBatterSection(obj) {
+    return firstValue(obj, [
+      '타자_구종별_대응',
+      '타자구종별대응',
+      'batterPitchResponse',
+      'batter_pitch_response',
+      'batters'
+    ]);
+  }
+
+  function validateBearstatJSON(obj) {
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+      throw new Error('JSON 최상위 데이터가 객체 형식이 아닙니다.');
+    }
+
+    const season = firstValue(obj, [
+      '시즌',
+      'season',
+      'year'
+    ]);
+
+    const team = firstValue(obj, [
+      '팀',
+      'team',
+      'teamName'
+    ]);
+
+    const pitchers = getPitcherSection(obj);
+    const batters = getBatterSection(obj);
+
+    if (!season) {
+      throw new Error('시즌 정보를 찾지 못했습니다.');
+    }
+
+    if (!team) {
+      throw new Error('팀 정보를 찾지 못했습니다.');
+    }
+
+    if (!pitchers && !batters) {
+      throw new Error(
+        '지원하는 기록 구조를 찾지 못했습니다. 투수_구종_구사율 또는 타자_구종별_대응 데이터가 필요합니다.'
+      );
+    }
+
+    return {
+      season,
+      team,
+      pitchers,
+      batters
+    };
+  }
+
+  /* ---------- 투수 데이터 정규화 ---------- */
+
+  function normalizePitchRows(value) {
+    const rows = arrayFrom(value);
+
+    return rows.map(row => {
+      const pitchType = firstValue(row, [
+        '구종',
+        '구종명',
+        'pitch',
+        'pitchType',
+        'type',
+        'name'
+      ]);
+
+      const usage = normalizeNumber(
+        firstValue(row, [
+          '구사율',
+          '구사율%',
+          'usage',
+          'usageRate',
+          'rate',
+          'percent'
+        ])
+      );
+
+      const velocity = normalizeNumber(
+        firstValue(row, [
+          '평균구속',
+          '평균_구속',
+          '평균 구속',
+          'avgVelocity',
+          'velocity',
+          'velo'
+        ])
+      );
+
+      const pitches = normalizeNumber(
+        firstValue(row, [
+          '투구수',
+          '구종투구수',
+          'pitches',
+          'pitchCount',
+          'count'
+        ])
+      );
+
+      return {
+        pitchType: pitchType ? String(pitchType) : '',
+        usageRate: usage,
+        avgVelocity: velocity,
+        pitches
+      };
+    }).filter(x => x.pitchType);
+  }
+
+  function normalizePitcher(item) {
+    if (!item || typeof item !== 'object') return null;
+
+    const name = firstValue(item, [
+      '선수',
+      '선수명',
+      '투수',
+      '투수명',
+      'name',
+      'player'
+    ]);
+
+    if (!name) return null;
+
+    const totalPitches = normalizeNumber(
+      firstValue(item, [
+        '총투구수',
+        '총_투구수',
+        '총 투구수',
+        'totalPitches',
+        'pitchCount',
+        'pitches'
+      ])
+    );
+
+    const pitchData = firstValue(item, [
+      '구종',
+      '구종별',
+      '구종_구사율',
+      '구종별_구사율',
+      '구종별 구사율',
+      'arsenal',
+      'pitches',
+      'pitchTypes'
+    ]);
+
+    let pitches = normalizePitchRows(pitchData);
+
+    /*
+      JSON이 아래처럼 평평한 구조여도 대응:
+      {
+        "선수명": "곽빈",
+        "직구": {"구사율":42.9,"평균구속":151.4}
+      }
+    */
+    if (!pitches.length) {
+      const ignore = new Set([
+        '선수',
+        '선수명',
+        '투수',
+        '투수명',
+        'name',
+        'player',
+        '총투구수',
+        '총_투구수',
+        '총 투구수',
+        'totalPitches',
+        'pitchCount'
+      ]);
+
+      pitches = Object.entries(item)
+        .filter(([key, value]) => (
+          !ignore.has(key) &&
+          value &&
+          typeof value === 'object' &&
+          !Array.isArray(value)
+        ))
+        .map(([pitchType, value]) => ({
+          pitchType,
+          usageRate: normalizeNumber(
+            firstValue(value, [
+              '구사율',
+              '구사율%',
+              'usage',
+              'usageRate',
+              'rate'
+            ])
+          ),
+          avgVelocity: normalizeNumber(
+            firstValue(value, [
+              '평균구속',
+              '평균_구속',
+              '평균 구속',
+              'avgVelocity',
+              'velocity'
+            ])
+          ),
+          pitches: normalizeNumber(
+            firstValue(value, [
+              '투구수',
+              'pitches',
+              'pitchCount',
+              'count'
+            ])
+          )
+        }))
+        .filter(x => (
+          x.usageRate !== null ||
+          x.avgVelocity !== null ||
+          x.pitches !== null
+        ));
+    }
+
+    return {
+      name: String(name),
+      totalPitches,
+      pitches
+    };
+  }
+
+  function normalizePitchers(section) {
+    if (!section) return [];
+
+    let raw = section;
+
+    if (
+      raw &&
+      typeof raw === 'object' &&
+      !Array.isArray(raw)
+    ) {
+      raw = firstValue(raw, [
+        '선수',
+        '선수별',
+        '투수',
+        '투수별',
+        'players',
+        'pitchers',
+        'data'
+      ]) || raw;
+    }
+
+    if (Array.isArray(raw)) {
+      return raw
+        .map(normalizePitcher)
+        .filter(Boolean);
+    }
+
+    return Object.entries(raw || {})
+      .map(([name, item]) => {
+        if (item && typeof item === 'object') {
+          return normalizePitcher({
+            선수명: name,
+            ...item
+          });
+        }
+
+        return null;
+      })
+      .filter(Boolean);
+  }
+
+  /* ---------- 타자 데이터 정규화 ---------- */
+
+  function normalizeBatterPitchRows(value) {
+    return arrayFrom(value)
+      .map(row => {
+        const pitchType = firstValue(row, [
+          '구종',
+          '구종명',
+          'pitch',
+          'pitchType',
+          'type',
+          'name'
+        ]);
+
+        return {
+          pitchType: pitchType ? String(pitchType) : '',
+
+          pitchesSeen: normalizeNumber(
+            firstValue(row, [
+              '상대투구수',
+              '투구수',
+              '본투구수',
+              'pitchesSeen',
+              'seen',
+              'pitches',
+              'count'
+            ])
+          ),
+
+          swingRate: normalizeNumber(
+            firstValue(row, [
+              '스윙률',
+              '스윙율',
+              'swingRate',
+              'swing'
+            ])
+          ),
+
+          whiffRate: normalizeNumber(
+            firstValue(row, [
+              '헛스윙률',
+              '헛스윙율',
+              'whiffRate',
+              'whiff'
+            ])
+          ),
+
+          ballsInPlay: normalizeNumber(
+            firstValue(row, [
+              '인플레이',
+              '인플레이타구',
+              '인플레이 타구',
+              '타구수',
+              'ballsInPlay',
+              'bip'
+            ])
+          )
+        };
+      })
+      .filter(x => x.pitchType);
+  }
+
+  function normalizeBatter(item) {
+    if (!item || typeof item !== 'object') return null;
+
+    const name = firstValue(item, [
+      '선수',
+      '선수명',
+      '타자',
+      '타자명',
+      'name',
+      'player'
+    ]);
+
+    if (!name) return null;
+
+    const pitchData = firstValue(item, [
+      '구종',
+      '구종별',
+      '구종별_대응',
+      '구종별 대응',
+      'response',
+      'responses',
+      'pitches',
+      'pitchTypes'
+    ]);
+
+    let pitches = normalizeBatterPitchRows(pitchData);
+
+    if (!pitches.length) {
+      const ignore = new Set([
+        '선수',
+        '선수명',
+        '타자',
+        '타자명',
+        'name',
+        'player'
+      ]);
+
+      pitches = Object.entries(item)
+        .filter(([key, value]) => (
+          !ignore.has(key) &&
+          value &&
+          typeof value === 'object' &&
+          !Array.isArray(value)
+        ))
+        .map(([pitchType, value]) => ({
+          pitchType,
+
+          pitchesSeen: normalizeNumber(
+            firstValue(value, [
+              '상대투구수',
+              '투구수',
+              'pitchesSeen',
+              'seen',
+              'count'
+            ])
+          ),
+
+          swingRate: normalizeNumber(
+            firstValue(value, [
+              '스윙률',
+              '스윙율',
+              'swingRate',
+              'swing'
+            ])
+          ),
+
+          whiffRate: normalizeNumber(
+            firstValue(value, [
+              '헛스윙률',
+              '헛스윙율',
+              'whiffRate',
+              'whiff'
+            ])
+          ),
+
+          ballsInPlay: normalizeNumber(
+            firstValue(value, [
+              '인플레이',
+              '인플레이타구',
+              '타구수',
+              'ballsInPlay',
+              'bip'
+            ])
+          )
+        }))
+        .filter(x => (
+          x.pitchesSeen !== null ||
+          x.swingRate !== null ||
+          x.whiffRate !== null ||
+          x.ballsInPlay !== null
+        ));
+    }
+
+    return {
+      name: String(name),
+      pitches
+    };
+  }
+
+  function normalizeBatters(section) {
+    if (!section) return [];
+
+    let raw = section;
+
+    if (
+      raw &&
+      typeof raw === 'object' &&
+      !Array.isArray(raw)
+    ) {
+      raw = firstValue(raw, [
+        '선수',
+        '선수별',
+        '타자',
+        '타자별',
+        'players',
+        'batters',
+        'data'
+      ]) || raw;
+    }
+
+    if (Array.isArray(raw)) {
+      return raw
+        .map(normalizeBatter)
+        .filter(Boolean);
+    }
+
+    return Object.entries(raw || {})
+      .map(([name, item]) => {
+        if (item && typeof item === 'object') {
+          return normalizeBatter({
+            선수명: name,
+            ...item
+          });
+        }
+
+        return null;
+      })
+      .filter(Boolean);
+  }
+
+  /* ---------- BEARStat 저장용 데이터 생성 ---------- */
+
+  function buildBearstatPitchData(source) {
+    const checked = validateBearstatJSON(source);
+
+    const pitchers = normalizePitchers(checked.pitchers);
+    const batters = normalizeBatters(checked.batters);
+
+    if (!pitchers.length && !batters.length) {
+      throw new Error(
+        '선수별 구종 데이터를 읽지 못했습니다. JSON 내부 항목 이름을 확인해 주세요.'
+      );
+    }
+
+    return {
+      version: 1,
+      season: Number(checked.season) || checked.season,
+      team: String(checked.team),
+
+      updatedAt: new Date().toISOString(),
+
+      pitchers,
+      batters,
+
+      sourceMeta: {
+        source:
+          firstValue(source, [
+            '출처',
+            '데이터출처',
+            'source'
+          ]) || '',
+
+        collectedAt:
+          firstValue(source, [
+            '수집일',
+            '수집일자',
+            'collectionDate',
+            'collectedAt'
+          ]) || ''
+      }
+    };
+  }
+
+  /* ---------- 기존 template와 병합 ---------- */
+
+  function readExistingPitchTemplate() {
+    if (!window.S || !S.orig) return null;
+
+    const re = new RegExp(
+      '<template\\s+id=["\\\']' +
+      JSON_TEMPLATE_ID +
+      '["\\\'][^>]*>([\\s\\S]*?)<\\/template>',
+      'i'
+    );
+
+    const match = re.exec(S.orig);
+
+    if (!match) return null;
+
+    try {
+      return {
+        match,
+        object: JSON.parse(match[1])
+      };
+    } catch (e) {
+      throw new Error(
+        '기존 ' +
+        JSON_TEMPLATE_ID +
+        ' JSON을 읽을 수 없습니다.'
+      );
+    }
+  }
+
+  function mergeSeasonData(existing, incoming) {
+    let root = existing;
+
+    if (
+      !root ||
+      typeof root !== 'object' ||
+      Array.isArray(root)
+    ) {
+      root = {
+        version: 1,
+        seasons: {}
+      };
+    }
+
+    /*
+      예전 단일 시즌 형식이 들어있으면 seasons 형식으로 변환
+    */
+    if (!root.seasons) {
+      const oldSeason = root.season;
+
+      root = {
+        version: root.version || 1,
+        seasons: oldSeason
+          ? {
+              [String(oldSeason)]: root
+            }
+          : {}
+      };
+    }
+
+    const seasonKey = String(incoming.season);
+
+    root.version = Math.max(Number(root.version) || 1, 1);
+
+    root.seasons[seasonKey] = incoming;
+
+    root.updatedAt = new Date().toISOString();
+
+    return root;
+  }
+
+  /* ---------- 수정 목록에 등록 ---------- */
+
+  function queuePitchJSON(data) {
+    if (!window.S || !S.orig) {
+      throw new Error('먼저 BEARStat HTML 파일을 불러와 주세요.');
+    }
+
+    const existing = readExistingPitchTemplate();
+
+    let merged;
+
+    if (existing) {
+      merged = mergeSeasonData(
+        existing.object,
+        data
+      );
+
+      const replacement =
+        '<template id="' +
+        JSON_TEMPLATE_ID +
+        '">' +
+        JSON.stringify(merged) +
+        '</template>';
+
+      if (typeof queueReplace === 'function') {
+        queueReplace(
+          existing.match.index,
+          existing.match.index + existing.match[0].length,
+          replacement,
+          '구종 데이터 ' + data.season
+        );
+      } else {
+        S.repl = S.repl || [];
+
+        S.repl.push({
+          s: existing.match.index,
+          e: existing.match.index + existing.match[0].length,
+          text: replacement,
+          label: '구종 데이터 ' + data.season
+        });
+
+        if (typeof touch === 'function') touch();
+      }
+    } else {
+      merged = mergeSeasonData(
+        null,
+        data
+      );
+
+      const template =
+        '\n\n<template id="' +
+        JSON_TEMPLATE_ID +
+        '">' +
+        JSON.stringify(merged) +
+        '</template>\n';
+
+      let position = S.orig.lastIndexOf('</body>');
+
+      if (position < 0) {
+        position = S.orig.length;
+      }
+
+      S.repl = S.repl || [];
+
+      /*
+        같은 시즌 JSON을 다시 입력했을 때 중복 예정 항목 방지
+      */
+      S.repl = S.repl.filter(
+        x => !String(x.label || '').startsWith('구종 데이터 ')
+      );
+
+      S.repl.push({
+        s: position,
+        e: position,
+        text: template,
+        label: '구종 데이터 ' + data.season
+      });
+
+      if (typeof touch === 'function') touch();
+    }
+
+    if (typeof renderPend === 'function') {
+      renderPend();
+    }
+
+    return merged;
+  }
+
+  /* ---------- 화면 ---------- */
+
+  function createJSONPanel() {
+    if (document.getElementById('bearstatJsonImporter')) {
+      return;
+    }
+
+    const panel = document.createElement('section');
+
+    panel.id = 'bearstatJsonImporter';
+
+    panel.className = 'card';
+
+    panel.hidden = true;
+
+    panel.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div>
+          <h2 style="margin:0 0 6px">JSON 일괄 입력</h2>
+          <div class="meta">
+            하루가 만든 구종 JSON 파일을 그대로 넣으면 자동으로 분석합니다.
+          </div>
+        </div>
+      </div>
+
+      <div style="height:16px"></div>
+
+      <label style="display:block">
+        <b>JSON 파일 선택</b>
+        <input
+          id="bearstatJsonFile"
+          type="file"
+          accept=".json,application/json"
+          style="display:block;width:100%;margin-top:8px"
+        >
+      </label>
+
+      <div style="height:16px"></div>
+
+      <label style="display:block">
+        <b>또는 JSON 직접 붙여넣기</b>
+
+        <textarea
+          id="bearstatJsonText"
+          spellcheck="false"
+          placeholder='{
+  "시즌": 2026,
+  "팀": "두산 베어스",
+  "투수_구종_구사율": {...},
+  "타자_구종별_대응": {...}
+}'
+          style="
+            width:100%;
+            min-height:260px;
+            margin-top:8px;
+            box-sizing:border-box;
+            font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+            font-size:13px;
+            line-height:1.5;
+          "
+        ></textarea>
+      </label>
+
+      <div style="
+        display:flex;
+        gap:8px;
+        flex-wrap:wrap;
+        margin-top:12px
+      ">
+        <button
+          type="button"
+          id="bearstatJsonAnalyze"
+        >
+          JSON 분석
+        </button>
+
+        <button
+          type="button"
+          id="bearstatJsonApply"
+          disabled
+        >
+          추가 예정 항목에 담기
+        </button>
+
+        <button
+          type="button"
+          id="bearstatJsonClear"
+          class="s"
+        >
+          비우기
+        </button>
+      </div>
+
+      <div
+        id="bearstatJsonStatus"
+        style="margin-top:14px"
+      ></div>
+
+      <div
+        id="bearstatJsonPreview"
+        hidden
+        style="margin-top:16px"
+      ></div>
+    `;
+
+    /*
+      기존 dataCard 근처에 삽입
+    */
+    const dataCard = document.getElementById('dataCard');
+
+    if (dataCard && dataCard.parentNode) {
+      dataCard.parentNode.insertBefore(
+        panel,
+        dataCard.nextSibling
+      );
+    } else {
+      const work =
+        document.getElementById('work') ||
+        document.body;
+
+      work.appendChild(panel);
+    }
+
+    bindJSONPanel();
+  }
+
+  let analyzedJSON = null;
+
+  function setJSONStatus(message, type) {
+    const box =
+      document.getElementById('bearstatJsonStatus');
+
+    if (!box) return;
+
+    box.innerHTML =
+      '<span class="' +
+      (type === 'ok' ? 'ok' : 'bad') +
+      '">' +
+      jEsc(message) +
+      '</span>';
+  }
+
+  function renderJSONPreview(data) {
+    const box =
+      document.getElementById('bearstatJsonPreview');
+
+    if (!box) return;
+
+    const pitcherPitchCount =
+      data.pitchers.reduce(
+        (sum, p) => sum + p.pitches.length,
+        0
+      );
+
+    const batterPitchCount =
+      data.batters.reduce(
+        (sum, p) => sum + p.pitches.length,
+        0
+      );
+
+    box.hidden = false;
+
+    box.innerHTML = `
+      <div
+        style="
+          border:1px solid rgba(127,127,127,.25);
+          border-radius:12px;
+          padding:14px;
+        "
+      >
+        <div class="meta">인식 결과</div>
+
+        <div style="
+          display:grid;
+          grid-template-columns:repeat(auto-fit,minmax(130px,1fr));
+          gap:10px;
+          margin-top:10px
+        ">
+          <div>
+            <div class="meta">시즌</div>
+            <b>${jEsc(data.season)}</b>
+          </div>
+
+          <div>
+            <div class="meta">팀</div>
+            <b>${jEsc(data.team)}</b>
+          </div>
+
+          <div>
+            <div class="meta">투수</div>
+            <b>${data.pitchers.length}명</b>
+          </div>
+
+          <div>
+            <div class="meta">투수 구종</div>
+            <b>${pitcherPitchCount}개</b>
+          </div>
+
+          <div>
+            <div class="meta">타자</div>
+            <b>${data.batters.length}명</b>
+          </div>
+
+          <div>
+            <div class="meta">타자 구종 대응</div>
+            <b>${batterPitchCount}개</b>
+          </div>
+        </div>
+
+        <details style="margin-top:14px">
+          <summary class="meta">
+            변환될 JSON 미리보기
+          </summary>
+
+          <pre style="
+            max-height:420px;
+            overflow:auto;
+            white-space:pre-wrap;
+            word-break:break-word;
+          ">${jEsc(jsonPretty(data))}</pre>
+        </details>
+      </div>
+    `;
+  }
+
+  function parseJSONInput() {
+    const textarea =
+      document.getElementById('bearstatJsonText');
+
+    const apply =
+      document.getElementById('bearstatJsonApply');
+
+    const preview =
+      document.getElementById('bearstatJsonPreview');
+
+    try {
+      if (!textarea || !textarea.value.trim()) {
+        throw new Error(
+          'JSON 파일을 선택하거나 JSON 코드를 붙여넣어 주세요.'
+        );
+      }
+
+      let source;
+
+      try {
+        source = JSON.parse(
+          textarea.value.replace(/^\uFEFF/, '')
+        );
+      } catch (e) {
+        throw new Error(
+          'JSON 문법 오류: ' + e.message
+        );
+      }
+
+      analyzedJSON =
+        buildBearstatPitchData(source);
+
+      renderJSONPreview(analyzedJSON);
+
+      if (apply) {
+        apply.disabled = false;
+      }
+
+      setJSONStatus(
+        analyzedJSON.season +
+          ' 시즌 ' +
+          analyzedJSON.team +
+          ' 구종 데이터를 정상적으로 읽었습니다 ✓',
+        'ok'
+      );
+    } catch (e) {
+      analyzedJSON = null;
+
+      if (apply) {
+        apply.disabled = true;
+      }
+
+      if (preview) {
+        preview.hidden = true;
+        preview.innerHTML = '';
+      }
+
+      setJSONStatus(
+        e.message,
+        'bad'
+      );
+    }
+  }
+
+  function bindJSONPanel() {
+    const file =
+      document.getElementById('bearstatJsonFile');
+
+    const textarea =
+      document.getElementById('bearstatJsonText');
+
+    const analyze =
+      document.getElementById('bearstatJsonAnalyze');
+
+    const apply =
+      document.getElementById('bearstatJsonApply');
+
+    const clear =
+      document.getElementById('bearstatJsonClear');
+
+    if (file) {
+      file.addEventListener(
+        'change',
+        function () {
+          const selected = this.files?.[0];
+
+          if (!selected) return;
+
+          const reader =
+            new FileReader();
+
+          reader.onload = function () {
+            try {
+              textarea.value =
+                String(reader.result || '');
+
+              parseJSONInput();
+            } catch (e) {
+              setJSONStatus(
+                e.message,
+                'bad'
+              );
+            }
+          };
+
+          reader.onerror = function () {
+            setJSONStatus(
+              'JSON 파일을 읽지 못했습니다.',
+              'bad'
+            );
+          };
+
+          reader.readAsText(
+            selected,
+            'UTF-8'
+          );
+        }
+      );
+    }
+
+    if (analyze) {
+      analyze.addEventListener(
+        'click',
+        parseJSONInput
+      );
+    }
+
+    if (apply) {
+      apply.addEventListener(
+        'click',
+        function () {
+          try {
+            if (!analyzedJSON) {
+              parseJSONInput();
+
+              if (!analyzedJSON) return;
+            }
+
+            queuePitchJSON(
+              analyzedJSON
+            );
+
+            setJSONStatus(
+              analyzedJSON.season +
+                ' 시즌 구종 데이터를 추가 예정 항목에 담았습니다 ✓ 아래의 "수정된 HTML 만들기"를 누르면 됩니다.',
+              'ok'
+            );
+          } catch (e) {
+            setJSONStatus(
+              e.message,
+              'bad'
+            );
+          }
+        }
+      );
+    }
+
+    if (clear) {
+      clear.addEventListener(
+        'click',
+        function () {
+          analyzedJSON = null;
+
+          if (file) file.value = '';
+
+          if (textarea) {
+            textarea.value = '';
+          }
+
+          if (apply) {
+            apply.disabled = true;
+          }
+
+          const status =
+            document.getElementById('bearstatJsonStatus');
+
+          const preview =
+            document.getElementById('bearstatJsonPreview');
+
+          if (status) {
+            status.innerHTML = '';
+          }
+
+          if (preview) {
+            preview.hidden = true;
+            preview.innerHTML = '';
+          }
+        }
+      );
+    }
+  }
+
+  /* ---------- JSON 탭 추가 ---------- */
+
+  function addJSONTab() {
+    const tabs =
+      document.getElementById('tabs');
+
+    if (!tabs) return;
+
+    if (
+      tabs.querySelector(
+        '[data-tab="jsonimport"]'
+      )
+    ) {
+      return;
+    }
+
+    const button =
+      document.createElement('button');
+
+    button.type = 'button';
+    button.dataset.tab = 'jsonimport';
+    button.textContent = 'JSON 일괄 입력';
+
+    /*
+      BEARStat HTML을 아직 안 불러왔어도 탭은 보이게 함
+    */
+    button.addEventListener(
+      'click',
+      function (e) {
+        e.preventDefault();
+
+        document
+          .querySelectorAll('#tabs button')
+          .forEach(x => {
+            x.classList.remove('on');
+          });
+
+        button.classList.add('on');
+
+        const c2 =
+          document.getElementById('c2');
+
+        const xcard =
+          document.getElementById('xcard');
+
+        const mcard =
+          document.getElementById('mcard');
+
+        const dataCard =
+          document.getElementById('dataCard');
+
+        const jsonCard =
+          document.getElementById(
+            'bearstatJsonImporter'
+          );
+
+        if (c2) c2.hidden = true;
+        if (xcard) xcard.hidden = true;
+        if (mcard) mcard.hidden = true;
+        if (dataCard) dataCard.hidden = true;
+
+        if (jsonCard) {
+          jsonCard.hidden = false;
+        }
+
+        if (window.S) {
+          S.tab = 'jsonimport';
+        }
+      }
+    );
+
+    tabs.appendChild(button);
+  }
+
+  /* ---------- 기존 탭 이동 감시 ---------- */
+
+  function hideJSONWhenOtherTabClicked() {
+    const tabs =
+      document.getElementById('tabs');
+
+    if (!tabs) return;
+
+    tabs.addEventListener(
+      'click',
+      function (e) {
+        const b =
+          e.target.closest('button[data-tab]');
+
+        if (!b) return;
+
+        if (
+          b.dataset.tab !== 'jsonimport'
+        ) {
+          const jsonCard =
+            document.getElementById(
+              'bearstatJsonImporter'
+            );
+
+          if (jsonCard) {
+            jsonCard.hidden = true;
+          }
+        }
+      }
+    );
+  }
+
+  /* ---------- 기존 renderTabs 재실행 대응 ---------- */
+
+  function watchTabs() {
+    const tabs =
+      document.getElementById('tabs');
+
+    if (!tabs) return;
+
+    const observer =
+      new MutationObserver(function () {
+        if (
+          !tabs.querySelector(
+            '[data-tab="jsonimport"]'
+          )
+        ) {
+          addJSONTab();
+        }
+      });
+
+    observer.observe(
+      tabs,
+      {
+        childList: true
+      }
+    );
+  }
+
+  /* ---------- 시작 ---------- */
+
+  function initJSONImporter() {
+    createJSONPanel();
+    addJSONTab();
+    hideJSONWhenOtherTabClicked();
+    watchTabs();
+  }
+
+  if (
+    document.readyState === 'loading'
+  ) {
+    document.addEventListener(
+      'DOMContentLoaded',
+      initJSONImporter
+    );
+  } else {
+    initJSONImporter();
+  }
+
+})();
+</script>
 </script>
 </body>
 </html>
